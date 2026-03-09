@@ -1,0 +1,755 @@
+openapi: 3.0.3
+info:
+  title: SkyCheck Digital Check-In API
+  description: |
+    Backend API for SkyHigh Airlines digital check-in system.
+    
+    **Key Features:**
+    - Time-bound seat reservations (120 seconds)
+    - Conflict-free seat assignment with optimistic locking
+    - Automatic hold expiration
+    - Baggage validation with payment processing
+    - High-performance seat map (P95 < 1s)
+
+  version: 1.0.0
+  contact:
+    name: SkyHigh Airlines Engineering
+    email: engineering@skyhigh.com
+  license:
+    name: Proprietary
+
+servers:
+  - url: http://localhost:8080
+    description: Local development server
+
+tags:
+  - name: Flights
+    description: Flight information and management
+  - name: Seat Map
+    description: Seat browsing and availability
+  - name: Check-In
+    description: Passenger check-in workflow
+
+paths:
+  /api/flights:
+    get:
+      tags:
+        - Flights
+      summary: Get all flights
+      description: Retrieve list of all available flights
+      operationId: getAllFlights
+      responses:
+        '200':
+          description: Flights retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Flight'
+
+  /api/flights/{flightId}:
+    get:
+      tags:
+        - Flights
+      summary: Get flight by ID
+      description: Retrieve flight details by flight ID
+      operationId: getFlightById
+      parameters:
+        - name: flightId
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        '200':
+          description: Flight retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Flight'
+        '404':
+          description: Flight not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/flights/{flightId}/seats:
+    get:
+      tags:
+        - Seat Map
+      summary: Get seat map for flight
+      description: |
+        Retrieve all seats for a flight with current availability status.
+        **Performance:** Cached for 10 seconds, P95 < 1000ms
+      operationId: getSeatMap
+      parameters:
+        - name: flightId
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        '200':
+          description: Seat map retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SeatMapResponse'
+        '404':
+          description: Flight not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/flights/{flightId}/seats/available:
+    get:
+      tags:
+        - Seat Map
+      summary: Get available seats
+      description: Retrieve only available seats for a flight
+      operationId: getAvailableSeats
+      parameters:
+        - name: flightId
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        '200':
+          description: Available seats retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/SeatDto'
+
+  /api/check-in:
+    post:
+      tags:
+        - Check-In
+      summary: Initiate check-in
+      description: Start check-in process for a passenger on a flight
+      operationId: initiateCheckIn
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CheckInRequest'
+      responses:
+        '201':
+          description: Check-in initiated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CheckInResponse'
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Passenger or flight not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/check-in/{checkInId}:
+    get:
+      tags:
+        - Check-In
+      summary: Get check-in status
+      description: Retrieve current status and details of a check-in
+      operationId: getCheckInStatus
+      parameters:
+        - name: checkInId
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        '200':
+          description: Check-in retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CheckInResponse'
+        '404':
+          description: Check-in not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+    delete:
+      tags:
+        - Check-In
+      summary: Cancel check-in
+      description: Cancel check-in and release any held seats
+      operationId: cancelCheckIn
+      parameters:
+        - name: checkInId
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        '204':
+          description: Check-in cancelled successfully
+        '404':
+          description: Check-in not found
+
+  /api/check-in/{checkInId}/hold-seat:
+    post:
+      tags:
+        - Check-In
+      summary: Hold a seat
+      description: |
+        Reserve a seat for 120 seconds during check-in.
+        Uses optimistic locking and Redis TTL for conflict-free assignment.
+        **Note:** Seat automatically expires if not confirmed within 120 seconds.
+      operationId: holdSeat
+      parameters:
+        - name: checkInId
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SeatHoldRequest'
+      responses:
+        '200':
+          description: Seat held successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SeatHoldResponse'
+        '404':
+          description: Check-in or seat not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: Seat already reserved or concurrent modification
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/check-in/{checkInId}/confirm-seat:
+    post:
+      tags:
+        - Check-In
+      summary: Confirm seat reservation
+      description: |
+        Permanently assign the held seat to the passenger.
+        Must be called before hold expires (120 seconds).
+      operationId: confirmSeat
+      parameters:
+        - name: checkInId
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SeatConfirmRequest'
+      responses:
+        '200':
+          description: Seat confirmed successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SeatHoldResponse'
+        '404':
+          description: Check-in or seat not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: Invalid seat state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '410':
+          description: Seat hold expired
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/check-in/{checkInId}/baggage:
+    post:
+      tags:
+        - Check-In
+      summary: Add baggage to check-in
+      description: |
+        Add baggage information. If weight exceeds 25kg:
+        - Check-in status becomes WAITING_FOR_PAYMENT
+        - Excess fee calculated at $10/kg
+        - Returns 402 Payment Required
+      operationId: addBaggage
+      parameters:
+        - name: checkInId
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BaggageRequest'
+      responses:
+        '200':
+          description: Baggage added, no payment required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BaggageResponse'
+        '402':
+          description: Payment required for excess baggage
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BaggageResponse'
+        '400':
+          description: Invalid baggage weight
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/check-in/{checkInId}/payment:
+    post:
+      tags:
+        - Check-In
+      summary: Process baggage payment
+      description: |
+        Process payment for excess baggage fees.
+        Resumes check-in after successful payment.
+      operationId: processPayment
+      parameters:
+        - name: checkInId
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PaymentRequest'
+      responses:
+        '200':
+          description: Payment processed successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaymentResponse'
+        '400':
+          description: Invalid payment amount or check-in not waiting for payment
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/check-in/{checkInId}/complete:
+    post:
+      tags:
+        - Check-In
+      summary: Complete check-in
+      description: |
+        Finalize check-in process. Requirements:
+        - Seat must be confirmed
+        - No pending payments
+      operationId: completeCheckIn
+      parameters:
+        - name: checkInId
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        '200':
+          description: Check-in completed successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CheckInResponse'
+        '400':
+          description: Check-in requirements not met
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '402':
+          description: Payment required before completion
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+components:
+  schemas:
+    Flight:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+          example: 1
+        flightNumber:
+          type: string
+          example: SH101
+        departureTime:
+          type: string
+          format: date-time
+          example: '2026-03-08T14:00:00'
+        arrivalTime:
+          type: string
+          format: date-time
+          example: '2026-03-08T17:00:00'
+        origin:
+          type: string
+          example: JFK
+        destination:
+          type: string
+          example: LAX
+        aircraftType:
+          type: string
+          example: Boeing 737
+        status:
+          type: string
+          enum: [SCHEDULED, BOARDING, DEPARTED, ARRIVED, CANCELLED, DELAYED]
+          example: SCHEDULED
+
+    SeatDto:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+          example: 1
+        seatNumber:
+          type: string
+          example: 12A
+        seatType:
+          type: string
+          enum: [WINDOW, MIDDLE, AISLE]
+          example: WINDOW
+        seatClass:
+          type: string
+          enum: [ECONOMY, BUSINESS, FIRST_CLASS]
+          example: ECONOMY
+        state:
+          type: string
+          enum: [AVAILABLE, HELD, CONFIRMED]
+          example: AVAILABLE
+        flightId:
+          type: integer
+          format: int64
+          example: 1
+
+    SeatMapResponse:
+      type: object
+      properties:
+        flightId:
+          type: integer
+          format: int64
+          example: 1
+        flightNumber:
+          type: string
+          example: SH101
+        seats:
+          type: array
+          items:
+            $ref: '#/components/schemas/SeatDto'
+        totalSeats:
+          type: integer
+          example: 30
+        availableSeats:
+          type: integer
+          example: 25
+        heldSeats:
+          type: integer
+          example: 3
+        confirmedSeats:
+          type: integer
+          example: 2
+
+    CheckInRequest:
+      type: object
+      required:
+        - passengerId
+        - flightNumber
+      properties:
+        passengerId:
+          type: integer
+          format: int64
+          example: 1
+        flightNumber:
+          type: string
+          example: SH101
+
+    CheckInResponse:
+      type: object
+      properties:
+        checkInId:
+          type: integer
+          format: int64
+          example: 101
+        passengerId:
+          type: integer
+          format: int64
+          example: 1
+        passengerName:
+          type: string
+          example: John Doe
+        flightId:
+          type: integer
+          format: int64
+          example: 1
+        flightNumber:
+          type: string
+          example: SH101
+        seatId:
+          type: integer
+          format: int64
+          example: 1
+          nullable: true
+        seatNumber:
+          type: string
+          example: 12A
+          nullable: true
+        status:
+          type: string
+          enum: [IN_PROGRESS, WAITING_FOR_PAYMENT, COMPLETED, CANCELLED]
+          example: IN_PROGRESS
+        checkInTime:
+          type: string
+          format: date-time
+          example: '2026-03-08T14:00:00'
+        completedAt:
+          type: string
+          format: date-time
+          example: '2026-03-08T14:05:00'
+          nullable: true
+        message:
+          type: string
+          example: Check-in in progress. Please select a seat.
+
+    SeatHoldRequest:
+      type: object
+      required:
+        - seatId
+        - passengerId
+        - checkInId
+      properties:
+        seatId:
+          type: integer
+          format: int64
+          example: 1
+        passengerId:
+          type: integer
+          format: int64
+          example: 1
+        checkInId:
+          type: integer
+          format: int64
+          example: 101
+
+    SeatHoldResponse:
+      type: object
+      properties:
+        reservationId:
+          type: integer
+          format: int64
+          example: 201
+        seatId:
+          type: integer
+          format: int64
+          example: 1
+        seatNumber:
+          type: string
+          example: 12A
+        state:
+          type: string
+          enum: [AVAILABLE, HELD, CONFIRMED]
+          example: HELD
+        holdExpiresAt:
+          type: string
+          format: date-time
+          example: '2026-03-08T14:02:00'
+          nullable: true
+        remainingSeconds:
+          type: integer
+          example: 120
+        message:
+          type: string
+          example: Seat held successfully. Complete check-in within 120 seconds.
+
+    SeatConfirmRequest:
+      type: object
+      required:
+        - seatId
+        - passengerId
+        - checkInId
+      properties:
+        seatId:
+          type: integer
+          format: int64
+          example: 1
+        passengerId:
+          type: integer
+          format: int64
+          example: 1
+        checkInId:
+          type: integer
+          format: int64
+          example: 101
+
+    BaggageRequest:
+      type: object
+      required:
+        - checkInId
+        - weightKg
+      properties:
+        checkInId:
+          type: integer
+          format: int64
+          example: 101
+        weightKg:
+          type: number
+          format: decimal
+          minimum: 0.1
+          example: 30.5
+
+    BaggageResponse:
+      type: object
+      properties:
+        baggageId:
+          type: integer
+          format: int64
+          example: 301
+        checkInId:
+          type: integer
+          format: int64
+          example: 101
+        weightKg:
+          type: number
+          format: decimal
+          example: 30.5
+        excessWeightKg:
+          type: number
+          format: decimal
+          example: 5.5
+        excessFeeAmount:
+          type: number
+          format: decimal
+          example: 55.00
+        paymentStatus:
+          type: string
+          enum: [NOT_REQUIRED, PENDING, COMPLETED, FAILED]
+          example: PENDING
+        paymentRequired:
+          type: boolean
+          example: true
+        message:
+          type: string
+          example: Baggage exceeds limit by 5.50 kg. Fee $55.00
+
+    PaymentRequest:
+      type: object
+      required:
+        - checkInId
+        - amount
+        - paymentMethod
+      properties:
+        checkInId:
+          type: integer
+          format: int64
+          example: 101
+        amount:
+          type: number
+          format: decimal
+          example: 55.00
+        paymentMethod:
+          type: string
+          example: CREDIT_CARD
+
+    PaymentResponse:
+      type: object
+      properties:
+        paymentId:
+          type: string
+          example: PAY-1234567890
+        amount:
+          type: number
+          format: decimal
+          example: 55.00
+        status:
+          type: string
+          enum: [PENDING, COMPLETED, FAILED]
+          example: COMPLETED
+        paidAt:
+          type: string
+          format: date-time
+          example: '2026-03-08T14:05:00'
+        message:
+          type: string
+          example: Payment processed successfully
+
+    ErrorResponse:
+      type: object
+      properties:
+        timestamp:
+          type: string
+          format: date-time
+          example: '2026-03-08T14:00:00'
+        status:
+          type: integer
+          example: 409
+        error:
+          type: string
+          example: Seat Already Reserved
+        message:
+          type: string
+          example: Seat 12A is not available. Current state HELD
+        path:
+          type: string
+          example: /api/check-in/101/hold-seat
+        validationErrors:
+          type: object
+          additionalProperties:
+            type: string
+          nullable: true
+
