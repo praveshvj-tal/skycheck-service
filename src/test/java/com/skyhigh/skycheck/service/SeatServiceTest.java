@@ -114,7 +114,7 @@ class SeatServiceTest {
         when(seatRepository.findByIdWithLock(1L)).thenReturn(Optional.of(testSeat));
         when(seatHoldManager.createHold(1L, 1L)).thenReturn(true);
         when(seatHoldManager.calculateExpirationTime()).thenReturn(LocalDateTime.now().plusSeconds(120));
-        when(seatRepository.save(any(Seat.class))).thenReturn(testSeat);
+        when(seatRepository.saveAndFlush(any(Seat.class))).thenReturn(testSeat);
 
         SeatReservation expectedReservation = SeatReservation.builder()
                 .id(1L)
@@ -131,7 +131,7 @@ class SeatServiceTest {
         assertNotNull(result);
         assertEquals(Seat.SeatState.HELD, testSeat.getState());
         verify(seatHoldManager).createHold(1L, 1L);
-        verify(seatRepository).save(testSeat);
+        verify(seatRepository).saveAndFlush(testSeat);
         verify(reservationRepository).save(any(SeatReservation.class));
         verify(historyRepository).save(any(SeatStateHistory.class));
     }

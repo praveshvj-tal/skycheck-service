@@ -27,9 +27,9 @@ public interface SeatRepository extends JpaRepository<Seat, Long> {
     List<Seat> findAvailableSeatsByFlightId(@Param("flightId") Long flightId);
 
     /**
-     * Find seat by ID with optimistic lock
+     * Find seat by ID with DB write lock to guarantee conflict-free seat assignment.
      */
-    @Lock(LockModeType.OPTIMISTIC)
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("SELECT s FROM Seat s WHERE s.id = :seatId")
     Optional<Seat> findByIdWithLock(@Param("seatId") Long seatId);
 
