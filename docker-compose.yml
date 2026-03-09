@@ -1,0 +1,71 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: skycheck-postgres
+    environment:
+      POSTGRES_DB: skycheck
+      POSTGRES_USER: skycheck
+      POSTGRES_PASSWORD: skycheck123
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U skycheck"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - skycheck-network
+
+  redis:
+    image: redis:7-alpine
+    container_name: skycheck-redis
+    command: redis-server --appendonly yes
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - skycheck-network
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: skycheck-app
+    environment:
+      DATABASE_URL: jdbc:postgresql://postgres:5432/skycheck
+      DATABASE_USERNAME: skycheck
+      DATABASE_PASSWORD: skycheck123
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      SPRING_PROFILES_ACTIVE: prod
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - skycheck-network
+    restart: unless-stopped
+
+volumes:
+  postgres-data:
+    driver: local
+  redis-data:
+    driver: local
+
+networks:
+  skycheck-network:
+    driver: bridge
+
