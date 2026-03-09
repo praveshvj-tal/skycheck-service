@@ -9,7 +9,7 @@ Production-grade backend system for **SkyHigh Airlines** digital check-in servic
 
 ## 🎯 Key Features
 
-- **Conflict-Free Seat Assignment** - Zero double-bookings using optimistic locking
+- **Conflict-Free Seat Assignment** - Zero double-bookings using database-level locking (`PESSIMISTIC_WRITE`)
 - **Time-Bound Seat Holds** - Automatic 120-second expiration using Redis TTL
 - **High Performance** - Seat map API P95 < 1 second with Redis caching
 - **Baggage Validation** - 25kg limit with automatic fee calculation
@@ -92,12 +92,8 @@ The system must guarantee conflict-free seat assignments, automatic cleanup of a
 ### Option 1: Docker Compose (Recommended - One Command)
 
 ```bash
-# Clone the repository
-git clone <repository-url>
-cd skycheck-service
-
 # Start all services (PostgreSQL, Redis, Application)
-docker-compose up --build
+docker compose up --build
 ```
 
 **What happens:**
@@ -122,19 +118,25 @@ Run dependencies via Docker, application locally:
 
 ```bash
 # Start PostgreSQL and Redis only
-docker-compose up postgres redis
+docker compose up postgres redis
 
 # In another terminal, run application
 mvn clean install
 mvn spring-boot:run
-
-# Or run SkyCheckApplication.java from your IDE
 ```
+
+### Troubleshooting (Docker)
+
+If you see:
+
+> Cannot connect to the Docker daemon at unix:///.../docker.sock. Is the docker daemon running?
+
+Start **Docker Desktop** on macOS and wait until it reports it’s running, then retry `docker compose up ...`.
 
 ### Option 3: IntelliJ IDEA
 
 1. Open project in IntelliJ IDEA
-2. Start Docker services: `docker-compose up postgres redis`
+2. Start Docker services: `docker compose up postgres redis`
 3. Run `SkyCheckApplication.java`
 4. Application starts on port 8080
 
@@ -364,9 +366,9 @@ WHERE state = 'HELD' AND id IN (
 );
 ```
 
-### Optimistic Locking Errors (409 Conflict)
+### Seat Reservation Conflicts (409 Conflict)
 
-This is expected behavior when multiple users target the same seat.
+This is expected behavior when multiple passengers try to hold/confirm the same seat at the same time. The system guarantees conflict-free assignment: only one request can succeed, and the rest will receive a deterministic 409 response.
 
 ---
 
@@ -396,4 +398,3 @@ app:
 ---
 
 **Built with ❤️ by SkyHigh Airlines Engineering Team**
-

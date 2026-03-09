@@ -29,7 +29,9 @@ skycheck-service/
 │   │       ├── application.yml      # Main configuration
 │   │       └── db/migration/        # Flyway database migrations
 │   │           ├── V1__Create_initial_schema.sql
-│   │           └── V2__Insert_sample_data.sql
+│   │           ├── V2__Insert_sample_data.sql
+│   │           ├── V3__Cascade_delete_seat_state_history.sql
+│   │           └── V4__Cascade_delete_seat_reservations.sql
 │   │
 │   └── test/
 │       ├── java/com/skyhigh/skycheck/
@@ -107,8 +109,9 @@ skycheck-service/
 #### `SeatService.java`
 **Manages seat lifecycle and concurrency**
 - Implements state machine (AVAILABLE → HELD → CONFIRMED)
-- Handles optimistic locking with retry
-- Coordinates with SeatHoldManager
+- Uses database-level locking to guarantee conflict-free seat holds/confirmations
+  - Seat row is fetched with a DB write lock (`PESSIMISTIC_WRITE`) before state transitions
+- Coordinates with SeatHoldManager for 120-second holds
 - Records state change history
 - Cache invalidation on state changes
 
@@ -132,7 +135,6 @@ skycheck-service/
 **Key Patterns:**
 - `@Transactional` for ACID operations
 - `@Cacheable` for performance
-- `@Retryable` for optimistic lock failures
 - Constructor injection via Lombok `@RequiredArgsConstructor`
 
 ---
@@ -152,7 +154,7 @@ skycheck-service/
 
 **Key Features:**
 - Custom JPQL queries for complex operations
-- `@Lock(LockModeType.OPTIMISTIC)` for concurrency
+- `@Lock(LockModeType.PESSIMISTIC_WRITE)` for seat assignment concurrency safety
 - Query methods following Spring Data conventions
 - Index hints in query annotations
 
@@ -291,6 +293,8 @@ skycheck-service/
 **Files:**
 - `V1__Create_initial_schema.sql` - Initial tables and indexes
 - `V2__Insert_sample_data.sql` - Demo flights and passengers
+- `V3__Cascade_delete_seat_state_history.sql` - Cascade delete for seat state history
+- `V4__Cascade_delete_seat_reservations.sql` - Cascade delete for seat reservations
 
 **Flyway Features:**
 - Automatic migration on startup
@@ -522,6 +526,8 @@ controller → service → repository → entity
 ### Flyway Versioning
 - `V1__Create_initial_schema.sql` - Tables, indexes, constraints
 - `V2__Insert_sample_data.sql` - Test data (3 flights, 90 seats, 5 passengers)
+- `V3__Cascade_delete_seat_state_history.sql` - Cascade delete for seat state history
+- `V4__Cascade_delete_seat_reservations.sql` - Cascade delete for seat reservations
 
 ### Migration Process
 1. Application starts
@@ -543,7 +549,7 @@ controller → service → repository → entity
 ### Local Development
 ```bash
 # 1. Start dependencies
-docker-compose up postgres redis
+docker compose up postgres redis
 
 # 2. Run application
 mvn spring-boot:run
@@ -555,7 +561,7 @@ http://localhost:8080/swagger-ui.html
 ### Docker Deployment
 ```bash
 # Single command startup
-docker-compose up
+docker compose up
 
 # Services available:
 # - Application: http://localhost:8080
@@ -633,7 +639,6 @@ mvn test jacoco:report
 ### Custom Metrics
 - Seat hold creation rate
 - Hold expiration rate
-- Optimistic lock retry rate
 - Cache hit/miss ratio
 
 ---
@@ -662,16 +667,6 @@ mvn test jacoco:report
 - **Check:** Redis connection
 - **Check:** Cleanup job logs
 - **Fix:** Manually release via API or database
-
-**Issue:** Optimistic locking failures
-- **Check:** High concurrency on same seat
-- **Expected:** Retries should succeed
-- **Fix:** Increase retry attempts if needed
-
-**Issue:** Cache showing stale data
-- **Check:** Cache TTL configuration
-- **Check:** Cache invalidation on state change
-- **Fix:** Reduce TTL or add invalidation
 
 **Issue:** Database connection errors
 - **Check:** Connection pool exhaustion
@@ -721,4 +716,3 @@ mvn test jacoco:report
 **Document Version:** 1.0  
 **Last Updated:** March 8, 2026  
 **Maintainer:** Backend Engineering Team
-

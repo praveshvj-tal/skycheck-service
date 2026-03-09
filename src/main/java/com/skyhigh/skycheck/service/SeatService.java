@@ -66,11 +66,10 @@ public class SeatService {
     public SeatReservation holdSeat(Seat seat, CheckIn checkIn) {
         log.info("Attempting to hold seat {} for passenger {}", seat.getId(), checkIn.getPassenger().getId());
 
-        // Refresh seat to get latest version
+        // Acquire DB-level write lock first to guarantee only one concurrent state transition.
         Seat currentSeat = seatRepository.findByIdWithLock(seat.getId())
                 .orElseThrow(() -> new ResourceNotFoundException("Seat not found: " + seat.getId()));
 
-        // Check if seat is available
         if (!currentSeat.canBeHeld()) {
             throw new SeatAlreadyReservedException(
                 String.format("Seat %s is not available. Current state: %s",
@@ -78,7 +77,7 @@ public class SeatService {
             );
         }
 
-        // Try to create hold in Redis (atomic operation)
+        // Create hold in Redis after DB lock is acquired.
         boolean holdCreated = seatHoldManager.createHold(currentSeat.getId(), checkIn.getPassenger().getId());
         if (!holdCreated) {
             throw new SeatAlreadyReservedException(
@@ -87,11 +86,9 @@ public class SeatService {
         }
 
         try {
-            // Update seat state to HELD
             currentSeat.hold();
-            seatRepository.save(currentSeat);
+            seatRepository.saveAndFlush(currentSeat);
 
-            // Create reservation record
             LocalDateTime expiresAt = seatHoldManager.calculateExpirationTime();
             SeatReservation reservation = SeatReservation.builder()
                     .seat(currentSeat)
@@ -105,7 +102,6 @@ public class SeatService {
 
             reservation = reservationRepository.save(reservation);
 
-            // Record state change in audit trail
             recordStateChange(currentSeat, Seat.SeatState.AVAILABLE, Seat.SeatState.HELD,
                     checkIn.getPassenger(), "Seat held for check-in");
 
@@ -113,9 +109,7 @@ public class SeatService {
                     currentSeat.getSeatNumber(), checkIn.getPassenger().getId(), expiresAt);
 
             return reservation;
-
         } catch (Exception e) {
-            // Rollback Redis hold if database operation fails
             seatHoldManager.releaseHold(currentSeat.getId());
             throw e;
         }
